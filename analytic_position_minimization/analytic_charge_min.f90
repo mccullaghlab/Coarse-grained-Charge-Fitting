@@ -52,7 +52,6 @@ module minData
         real (kind=8), allocatable :: chargeForce(:,:)
         real (kind=8), allocatable :: chargeGradient(:)
         real (kind=8) maxGradient
-!        real (kind=8), save :: lamda = 0.01
         real (kind=8) lambda
         real (kind=8), save :: delta = 0.1
 
@@ -81,9 +80,6 @@ program esp_grid
         ! read the trajectories and perform the fits
         call read_xyz_fit_esp()
 
-        ! compute pair coulomb energies
-        call compute_dimer_elec_energy()
-
         tf = omp_get_wtime()
         write(*,'("Total time elapsed:",f8.3)') tf-ti
 
@@ -94,44 +90,6 @@ endprogram esp_grid
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 !!!!!!! Subroutines  !!!!!!!!!
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-
-subroutine compute_dimer_elec_energy
-        use atomData
-        use cgData
-        use integralData
-        implicit none
-        real (kind=8), parameter :: chargeConvert = 332.063697438
-        integer atom1, atom2
-        real (kind=8) diff(3)
-        real (kind=8) dist2
-        real (kind=8) coulombEnergyAtom
-        real (kind=8) coulombEnergyCg
-
-        ! compute coulomb energy
-        coulombEnergyAtom = 0.0
-        do atom1 = 1, nAtoms/2
-                do atom2 = nAtoms/2 + 1, nAtoms
-                        diff = atomPos(atom1,:) - atomPos(atom2,:)
-                        dist2 = dot_product(diff,diff)
-                        coulombEnergyAtom = coulombEnergyAtom + atomCharges(atom1)*atomCharges(atom2)/sqrt(dist2)
-                enddo
-        enddo
-        ! compute coulomb energy
-        coulombEnergyCg = 0.0
-        do atom1 = 1, nCgs/2
-                do atom2 = nCgs/2 + 1, nCgs
-                        diff = cgPos(atom1,:) - cgPos(atom2,:)
-                        dist2 = dot_product(diff,diff)
-                        coulombEnergyCg = coulombEnergyCg + cgCharges(atom1)*cgCharges(atom2)/sqrt(dist2)
-                enddo
-        enddo
-
-        open(72,file="atom_cg_elec_energy.dat")
-        write(72,'(2f30.10)') coulombEnergyAtom*chargeConvert, coulombEnergyCg*chargeConvert
-        close(72)
-
-endsubroutine compute_dimer_elec_energy
-
 
 ! allocate arrays
 subroutine allocate_arrays()
@@ -172,9 +130,13 @@ subroutine read_xyz_fit_esp()
                 
         ! read the atom psf file to obtain number of atoms and charges.  atomPos and charge array are allocated in this routine
         call read_psf_file()
+        ! read atom DCD header
         call read_dcd_header(atomXyzFile,nAtoms,nSteps,20)
+        ! read CG DCD header
         call read_dcd_header(cgXyzFile,nCgs,nSteps,30)
+        ! allocate CG position array
         allocate(cgPos(nCgs,3))
+        ! read coordinates from DCD files
         call read_dcd_step(atomPos,nAtoms,20)
         call read_dcd_step(cgPos,nCgs,30)
         ! allocate some integral arrays
@@ -192,7 +154,7 @@ subroutine read_xyz_fit_esp()
 
         ! perform minimzation
         open(35,file=outFile)
-        lambda = 0.1
+        lambda = 0.01
         previousRss = intRss
         do minStep = 1, nMinSteps
 
@@ -200,8 +162,9 @@ subroutine read_xyz_fit_esp()
                 call compute_charge_gradient(A,B,C,atomCharges,cgCharges,nAtoms,nCgs,intRss,atomPos,cgPos)
         
                 call move_cg_sites(cgPos,nCgs,chargeForce)
-
                 call recompute_A_B_matrices(atomPos,nAtoms,cgPos,nCgs,A,B)
+
+                ! recompute charges and residual
                 call integral_fit_charges(A, B, C, atomCharges, cgCharges, nAtoms, nCgs, intRss)
                 write(*,'("Step:", i10, " maximum gradient: ", f20.10, " residual:", f20.10)') minStep, maxval(chargeGradient), intRss
                 ! print CG charges
@@ -214,9 +177,12 @@ subroutine read_xyz_fit_esp()
 
                 if (maxval(chargeGradient) < thresh) then
                         exit
-                endif       
-                if (abs(intRss-previousRss) < 0.2) then 
-                        lambda = 0.01
+                endif 
+                if (abs(intRss-previousRss) < 0.0001) then 
+                        lambda = 0.0001
+                endif
+                if (abs(intRss-previousRss) < 0.00001) then 
+                        lambda = 0.00001
                 endif
                 if (abs(intRss-previousRss) < 0.01) then 
                         print*, "The residual has converged."
@@ -241,11 +207,12 @@ subroutine move_cg_sites(cgPos,nCgs,chargeForce)
 
 endsubroutine move_cg_sites
 
-! we will compute the gradient of moving the charges using numerical differentiation
+! Compute the spacial gradient of the charge residual
 subroutine compute_charge_gradient(A,B,C,atomCharges,cgCharges,nAtoms,nCgs,intRss,atomPos,cgPos)
         use inputData
         use minData
         implicit none
+        real (kind=8), parameter :: pi = 3.1415926535
         integer nAtoms
         integer nCgs
         real (kind=8) atomPos(nAtoms,3)
@@ -253,39 +220,33 @@ subroutine compute_charge_gradient(A,B,C,atomCharges,cgCharges,nAtoms,nCgs,intRs
         real (kind=8) A(nCgs,nCgs)
         real (kind=8) B(nCgs,nAtoms)
         real (kind=8) C(nAtoms,nAtoms)
-        real (kind=8) cgCharges(nCgs,1)
-        real (kind=8) atomCharges(nAtoms,1)
+        real (kind=8) cgCharges(nCgs)
+        real (kind=8) atomCharges(nAtoms)
         real (kind=8) intRss
         real (kind=8) plusRss
         real (kind=8) minusRss
-        real (kind=8) temp
+        real (kind=8) temp(3)
         real (kind=8) gradient
         integer cg1
         integer cg2
+        integer atom
         integer k
       
+        chargeForce = 0.0
         do cg1 = 1, nCgs
-                gradient = 0
-                do k=1,3   
-                        cgPos(cg1,k) = cgPos(cg1,k) + delta
-                        ! update A and B matrices for new CG pos
-                        call update_A_B_matrices(atomPos,nAtoms,cgPos,nCgs,A,B,cg1)
-                        ! fit using integral approach
-                        call integral_fit_charges(A, B, C, atomCharges, cgCharges, nAtoms, nCgs, plusRss)
-                        ! now shift negative
-                        cgPos(cg1,k) = cgPos(cg1,k) - 2.0*delta
-                        ! update A and B matrices for new CG pos
-                        call update_A_B_matrices(atomPos,nAtoms,cgPos,nCgs,A,B,cg1)
-                        ! fit using integral approach
-                        call integral_fit_charges(A, B, C, atomCharges, cgCharges, nAtoms, nCgs, minusRss)
-                        chargeForce(cg1,k) = (plusRss-minusRss) / (2.0*delta)
-                        gradient = gradient + chargeForce(cg1,k)*chargeForce(cg1,k)
-                        ! move it back
-                        cgPos(cg1,k) = cgPos(cg1,k) + delta
-                        call update_A_B_matrices(atomPos,nAtoms,cgPos,nCgs,A,B,cg1)
+                do atom = 1, nAtoms
+                        temp = cgPos(cg1,:) - atomPos(atom,:)
+                        temp = 4*pi*cgCharges(cg1)*atomCharges(atom)* temp/norm2(temp)
+                        chargeForce(cg1,:) = chargeForce(cg1,:) + temp
                 enddo
-                chargeGradient(cg1) = sqrt(gradient)
-
+                do cg2 = 1, nCgs
+                        if (cg1 .ne. cg2) then
+                                temp = cgPos(cg1,:) - cgPos(cg2,:)
+                                temp = -4*pi*cgCharges(cg1)*cgCharges(cg2)* temp/norm2(temp)
+                                chargeForce(cg1,:) = chargeForce(cg1,:) + temp
+                        endif
+                enddo
+                chargeGradient(cg1) = norm2(chargeForce(cg1,:))
         enddo 
         
 endsubroutine compute_charge_gradient
@@ -448,6 +409,7 @@ endsubroutine parse_config_file
 !subroutine to compute CG charges from input matrices A and B.  The residual sum of squares is calculated with aid of all-atom matrix C
 subroutine integral_fit_charges(A, B, C, atomCharges, cgCharges, nAtoms, nCg, rss)
         implicit none
+        real (kind=8), parameter :: pi = 3.1415926535
         integer nAtoms
         integer nCg
         real (kind=8) A(nCg,nCg)
@@ -491,7 +453,7 @@ subroutine integral_fit_charges(A, B, C, atomCharges, cgCharges, nAtoms, nCg, rs
 
         ! compute residual sum of squares
         temp = matmul(transpose(atomChargesM),matmul(C,atomChargesM))+matmul(transpose(cgCharges),matmul(A,cgCharges))-2*matmul(transpose(cgCharges),matmul(B,atomChargesM))
-        rss = temp(1,1)
+        rss = 2*pi*temp(1,1)
 
 endsubroutine integral_fit_charges
 
