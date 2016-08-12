@@ -1,7 +1,11 @@
+# Code to perform coarse-grained charge-fitting
 
 
+This code repository contains two versions of the coarse-grained charge fitting code.  These are:
 
-CODE to perform charge fitting
+1. analytic_position_minimzation - this code performs the analytic coarse-grained charge-fitting and site position minimization using analytic derivatives and gradient descent minimization.  
+
+2. grid_anlytic_charge_fit - this code performs three versions of coarse-grained charge-fitting.  Namely grid, grid with Lagrange multiplier to maintain charge conservation and the analytic charge optimization.  This code does not perform site position minimization.  
 
 
 
