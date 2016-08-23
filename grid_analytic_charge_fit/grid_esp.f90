@@ -1,5 +1,7 @@
 
 !requires lapack
+! CITATION:
+! P. McCullagh, P. T. Lake, M. McCullagh. Deriving Coarse-grained Charges from All-atom Systems: An Analytic Solution. J. Chem. Theory Comp., 2016.
 
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 !!!!!!!!!  Modules !!!!!!!!!!!!!

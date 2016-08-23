@@ -1,5 +1,6 @@
 
 ! USAGE analytic_charge_min.x -cfg [CONFIG FILE NAME]
+!
 ! CONFIG FILE FORMAT:
 ! 
 !atompsffile = [atomic PSF file name]
@@ -14,6 +15,9 @@
 ! charges will be written in XYZ format to the outfile
 !
 ! REQUIREMENTS: lapack
+!
+! CITATION:
+! P. McCullagh, P. T. Lake, M. McCullagh. Deriving Coarse-grained Charges from All-atom Systems: An Analytic Solution. J. Chem. Theory Comp., 2016.
 
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 !!!!!!!!!  Modules !!!!!!!!!!!!!
@@ -88,6 +92,9 @@ program esp_grid
 
         tf = omp_get_wtime()
         write(*,'("Total time elapsed:",f8.3)') tf-ti
+
+
+        write(*,'("Please cite: P. McCullagh, P. T. Lake, M. McCullagh. Deriving Coarse-grained Charges from All-atom Systems: An Analytic Solution. J. Chem. Theory Comp., 2016.")')
 
 endprogram esp_grid
 
@@ -293,6 +300,7 @@ subroutine parse_command_line(cfgFile)
                 write(*,'("Must provide a cfg file using command line argument -cfg [cfg file name]")')
                 stop
         endif
+
 
 endsubroutine parse_command_line
 
