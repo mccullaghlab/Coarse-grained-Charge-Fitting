@@ -9,5 +9,6 @@ This code performs the analytic coarse-grained charge-fitting and site position 
 ## grid_anlytic_charge_fit 
 This code performs three versions of coarse-grained charge-fitting.  Namely grid, grid with Lagrange multiplier to maintain charge conservation and the analytic charge optimization.  This code does not perform CG site position minimization.  
 
-
+Please cite:
+(http://pubs.acs.org/doi/abs/10.1021/acs.jctc.6b00507)
 
