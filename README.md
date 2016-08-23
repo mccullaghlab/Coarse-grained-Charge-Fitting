@@ -3,10 +3,10 @@
 
 This code repository contains two versions of the coarse-grained charge fitting code.  These are:
 
-## analytic_position_minimzation 
+## [analytic_position_minimzation](https://github.com/mccullaghlab/Coarse-grained-Charge-Fitting/tree/master/analytic_position_minimization)
 This code performs the analytic coarse-grained charge-fitting and site position minimization using analytic derivatives and gradient descent minimization.  
 
-## grid_anlytic_charge_fit 
+## [grid_anlytic_charge_fit](https://github.com/mccullaghlab/Coarse-grained-Charge-Fitting/tree/master/grid_analytic_charge_fit)
 This code performs three versions of coarse-grained charge-fitting.  Namely grid, grid with Lagrange multiplier to maintain charge conservation and the analytic charge optimization.  This code does not perform CG site position minimization.  
 
 Please cite:
