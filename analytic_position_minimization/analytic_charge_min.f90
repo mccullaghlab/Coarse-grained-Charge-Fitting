@@ -1,23 +1,30 @@
 
-!requires lapack
+! USAGE analytic_charge_min.x -cfg [CONFIG FILE NAME]
+! CONFIG FILE FORMAT:
+! 
+!atompsffile = [atomic PSF file name]
+!atomdcdfile = [atomic DCD file name]
+!cgdcdfile = [CG DCD file name] 
+!outfile = [output file - will contain positions and charges]
+!thresh = [minimization convergence criteria]
+!minsteps = [number of minimization steps]
+!
+!
+! OUTPUT: Minimization information will be written to standard out.  The CG positions and 
+! charges will be written in XYZ format to the outfile
+!
+! REQUIREMENTS: lapack
 
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 !!!!!!!!!  Modules !!!!!!!!!!!!!
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-
-module inputData
-
-        integer deltaStep
-        integer nThreads
-
-endmodule inputData
 
 module atomData
 
         integer nAtoms
         real (kind=8), allocatable :: atomPos(:,:)
         real (kind=8), allocatable :: atomCharges(:)
-        character*80 atomXyzFile
+        character*80 atomDcdFile
         character*80 atomPsfFile
         character*80 outFile
         real (kind=8), allocatable :: atomEspMat(:,:)
@@ -28,7 +35,7 @@ module cgData
 
         integer nCgs
         real (kind=8), allocatable :: cgPos(:,:)
-        character*80 cgXyzFile
+        character*80 cgDcdFile
         real (kind=8), allocatable :: cgEspMat(:,:)
 
 endmodule cgData
@@ -64,21 +71,20 @@ endmodule minData
 program esp_grid
         use atomData
         use cgData
-        use inputData
         implicit none
         character*80 cfgFile
         real (kind=8) omp_get_wtime
         real (kind=8) ti,tf
 
         ti = omp_get_wtime()
-        ! read config file, number of openMP threads and stride from command line
-        call parse_command_line(cfgFile,nThreads,deltaStep)
+        ! read config file name from command line using option -cfg [config file name]
+        call parse_command_line(cfgFile)
         
         ! read the rest of the config parameters from the config file
         call parse_config_file(cfgFile)
 
         ! read the trajectories and perform the fits
-        call read_xyz_fit_esp()
+        call read_dcd_fit_esp()
 
         tf = omp_get_wtime()
         write(*,'("Total time elapsed:",f8.3)') tf-ti
@@ -110,8 +116,8 @@ subroutine allocate_arrays()
 
 endsubroutine allocate_arrays
 
-subroutine read_xyz_fit_esp()
-        use inputData
+! routine to perform minimization.  Will first read coordinates and charges of atom system and initial CG coordinates
+subroutine read_dcd_fit_esp()
         use atomData
         use cgData
         use minData
@@ -131,9 +137,9 @@ subroutine read_xyz_fit_esp()
         ! read the atom psf file to obtain number of atoms and charges.  atomPos and charge array are allocated in this routine
         call read_psf_file()
         ! read atom DCD header
-        call read_dcd_header(atomXyzFile,nAtoms,nSteps,20)
+        call read_dcd_header(atomDcdFile,nAtoms,nSteps,20)
         ! read CG DCD header
-        call read_dcd_header(cgXyzFile,nCgs,nSteps,30)
+        call read_dcd_header(cgDcdFile,nCgs,nSteps,30)
         ! allocate CG position array
         allocate(cgPos(nCgs,3))
         ! read coordinates from DCD files
@@ -176,15 +182,16 @@ subroutine read_xyz_fit_esp()
                 flush(35)  
 
                 if (maxval(chargeGradient) < thresh) then
+                        print*, "The maximum gradient has converged."
                         exit
                 endif 
-                if (abs(intRss-previousRss) < 0.0001) then 
-                        lambda = 0.0001
+                if (abs(intRss-previousRss) < 0.001) then 
+                        lambda = 0.001
                 endif
                 if (abs(intRss-previousRss) < 0.00001) then 
                         lambda = 0.00001
                 endif
-                if (abs(intRss-previousRss) < 0.01) then 
+                if (abs(intRss-previousRss) < thresh) then 
                         print*, "The residual has converged."
                         exit
                 endif
@@ -193,8 +200,9 @@ subroutine read_xyz_fit_esp()
         enddo
         close(35)
 
-endsubroutine read_xyz_fit_esp
+endsubroutine read_dcd_fit_esp
 
+! move the CG sites along the spacial gradient
 subroutine move_cg_sites(cgPos,nCgs,chargeForce)
         use minData, only : lambda
         implicit none
@@ -209,7 +217,6 @@ endsubroutine move_cg_sites
 
 ! Compute the spacial gradient of the charge residual
 subroutine compute_charge_gradient(A,B,C,atomCharges,cgCharges,nAtoms,nCgs,intRss,atomPos,cgPos)
-        use inputData
         use minData
         implicit none
         real (kind=8), parameter :: pi = 3.1415926535
@@ -251,19 +258,14 @@ subroutine compute_charge_gradient(A,B,C,atomCharges,cgCharges,nAtoms,nCgs,intRs
         
 endsubroutine compute_charge_gradient
 
-subroutine parse_command_line(cfgFile,nThreads,deltaStep)
+! read config file name from command line
+subroutine parse_command_line(cfgFile)
         implicit none
         integer i
         character*30 arg
         character*80 cfgFile
-        integer nThreads
-        integer deltaStep
-        logical deltaStepFlag
         logical cfgFileFlag
-        logical nThreadsFlag
 
-        deltaStepFlag = .false.
-        nThreadsFlag = .false.
         cfgFileFlag = .false.
 
         i=1
@@ -278,21 +280,9 @@ subroutine parse_command_line(cfgFile,nThreads,deltaStep)
                         call get_command_argument(i,cfgFile)
                         cfgFileFlag=.true.
                         print*, "CFG File: ", cfgFile
-                case ('-stride') 
-                        i = i+1
-                        call get_command_argument(i,arg)
-                        read(arg,'(i10)') deltaStep
-                        print*, "Stride: ", deltaStep
-                        deltaStepFlag = .true.
-                case ('-np') 
-                        i = i+1
-                        call get_command_argument(i,arg)
-                        read(arg,'(i10)') nThreads
-                        print*, "Number of threads: ", nThreads
-                        nThreadsFlag = .true.
                 case default 
                         print '(a,a,/)', 'Unrecognized command-line option: ', arg 
-                        print*, 'Usage: analytic_charge_min.x -cfg [cfg file] -stride [delta step size] -np [number of threads]'
+                        print*, 'Usage: analytic_charge_min.x -cfg [cfg file]'
                         stop 
                 end select 
                 i = i+1
@@ -302,14 +292,6 @@ subroutine parse_command_line(cfgFile,nThreads,deltaStep)
         if (cfgFileFlag.eqv..false.) then
                 write(*,'("Must provide a cfg file using command line argument -cfg [cfg file name]")')
                 stop
-        endif
-        if (deltaStepFlag.eqv..false.) then
-                write(*,'("Using default step size of 1.  Change this with command line argument -stride [delta step size]")')
-                deltaStep = 1
-        endif
-        if (nThreadsFlag.eqv..false.) then
-                write(*,'("Using default of 1 thread.  Change this with command line argument -np [number of threads]")')
-                nThreads = 1
         endif
 
 endsubroutine parse_command_line
@@ -328,16 +310,16 @@ subroutine parse_config_file(cfgFile)
         character*30 sep
         real (kind=8) cutoff
         integer ios
-        logical atomXyzFlag
+        logical atomDcdFlag
         logical atomPsfFlag
-        logical cgXyzFlag
+        logical cgDcdFlag
         logical outFileFlag
         logical threshFlag
         logical nMinStepsFlag
 
-        atomXyzFlag = .false.
+        atomDcdFlag = .false.
         atomPsfFlag = .false.
-        cgXyzFlag = .false.
+        cgDcdFlag = .false.
         outFileFlag = .false.
         nMinStepsFlag = .false.
         threshFlag = .false.
@@ -347,18 +329,18 @@ subroutine parse_config_file(cfgFile)
                 read(12,'(a600)',IOSTAT=ios) line
                 call split(line,'=',firstWord, sep)
                 if (line .ne. "") then
-                        if (firstWord .eq. "atomxyzfile") then
-                                atomXyzFile = line
-                                write(*,*) "Atom xyz file:", atomXyzFile
-                                atomXyzFlag = .true.
+                        if (firstWord .eq. "atomdcdfile") then
+                                atomDcdFile = line
+                                write(*,*) "Atom DCD file:", atomDcdFile
+                                atomDcdFlag = .true.
                         else if (firstWord .eq. "atompsffile") then
                                 atomPsfFile = line
                                 write(*,*) "Atom PSF file:", atomPsfFile
                                 atomPsfFlag = .true.
-                        else if (firstWord .eq. "cgxyzfile") then
-                                cgXyzFile = line
-                                write(*,*) "CG xyz file:", cgXyzFile
-                                cgXyzFlag = .true.
+                        else if (firstWord .eq. "cgdcdfile") then
+                                cgDcdFile = line
+                                write(*,*) "CG DCD file:", cgDcdFile
+                                cgDcdFlag = .true.
                         else if (firstWord .eq. "outfile") then
                                 outFile = line
                                 write(*,*) "out file:", outFile
@@ -378,16 +360,16 @@ subroutine parse_config_file(cfgFile)
         close(12)
 
 
-        if (atomXyzFlag.eqv..false.) then
-                write(*,'("Must provide a atom xyz file using config file")')
+        if (atomDcdFlag.eqv..false.) then
+                write(*,'("Must provide a atom DCD file using config file")')
                 stop
         endif
         if (atomPsfFlag.eqv..false.) then
                 write(*,'("Must provide a atom PSF file using config file")')
                 stop
         endif
-        if (cgXyzFlag.eqv..false.) then
-                write(*,'("Must provide a CG xyz file using config file")')
+        if (cgDcdFlag.eqv..false.) then
+                write(*,'("Must provide a CG DCD file using config file")')
                 stop
         endif
         if (outFileFlag.eqv..false.) then
@@ -610,82 +592,7 @@ subroutine recompute_A_B_matrices(atomPos,nAtoms,cgPos,nCgs,A,B)
 
 endsubroutine recompute_A_B_matrices
 
-!Read atomic charges from some file
-subroutine read_atom_xyz
-        use atomData
-        implicit none
-!        real (kind=8), parameter :: chargeConvert = 553.43949573 ! to convert to kT/e with dielectric of 1
-        real (kind=8), parameter :: chargeConvert = 1.0 ! 
-        integer atom, j
-        character*600 line
-        character*80,firstWord
-        character*30 sep
-        integer ios
-
-        !open the xyz file
-        open(20,file=atomXyzFile)
-        ! first line contains number of atoms 
-        read(20,'(a600)') line
-        call split(line,' ',firstWord, sep)
-        read(firstWord,'(i10)') nAtoms
-        print*, "Number of atoms:", nAtoms
-        ! allocate position and charge arrays
-        allocate(atomCharges(nAtoms))
-        allocate(atomPos(nAtoms,3))
-        ! skip second line
-        read(20,*)
-        ! read position and charge of all atoms
-        do atom=1, nAtoms
-                read(20,'(a600)') line
-                call split(line,' ',firstWord, sep)
-                do j = 1,3
-                        call split(line,' ',firstWord, sep)
-                        read(firstWord,'(f20.5)') atomPos(atom,j)
-                enddo
-                call split(line,' ',firstWord, sep)
-                read(firstWord,'(f20.5)') atomCharges(atom)
-        enddo
-        close(20)
-
-endsubroutine read_atom_xyz
-
-
-!Read CG positions
-subroutine read_cg_xyz
-        use cgData
-        implicit none
-        integer atom, j
-        character*600 line
-        character*80,firstWord
-        character*30 sep
-        integer ios
-
-        !open the xyz file
-        open(30,file=cgXyzFile)
-        ! first line contains number of atoms 
-        read(30,'(a600)') line
-        call split(line,' ',firstWord, sep)
-        read(firstWord,'(i10)') nCgs
-        print*, "Number of CG sites:", nCgs
-        ! allocate position and charge arrays
-        allocate(cgPos(nCgs,3))
-        ! skip second line
-        read(30,*)
-        ! read position and charge of all atoms
-        do atom=1, nCgs
-                read(30,'(a600)') line
-                call split(line,' ',firstWord, sep)
-                do j = 1,3
-                        call split(line,' ',firstWord, sep)
-                        read(firstWord,'(f20.5)') cgPos(atom,j)
-                enddo
-        enddo
-        close(30)
-
-endsubroutine read_cg_xyz
-
-
-!Read atomic charges from some file
+!Read atomic charges from psf file
 subroutine read_psf_file
         use atomData
         implicit none
