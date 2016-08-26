@@ -1,8 +1,0 @@
-
-
-atomtopfile = [atomic topolgy file name - this file must contain atomic charges]
-atomcoordfile = [atomic coordinate file name]
-cgcoordfile = [CG coordinate file name] 
-outfile = [output file - will contain positions and charges]
-thresh = [minimization convergence criteria]
-minsteps = [number of minimization steps]
