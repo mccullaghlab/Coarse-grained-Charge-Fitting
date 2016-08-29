@@ -113,7 +113,7 @@ subroutine allocate_arrays()
         implicit none
 
         ! integral based matrices
-        allocate(A(nCgs,nCgs),B(nCgs,nAtoms),C(nAtoms,nAtoms),cgCharges(nCgs))
+        allocate(A(nCgs,nAtoms),B(nCgs,nCgs),C(nAtoms,nAtoms),cgCharges(nCgs))
         A = 0.0
         B = 0.0
         C = 0.0
@@ -172,7 +172,7 @@ subroutine read_dcd_fit_esp()
         do minStep = 1, nMinSteps
 
 
-                call compute_charge_gradient(A,B,C,atomCharges,cgCharges,nAtoms,nCgs,intRss,atomPos,cgPos)
+                call compute_charge_gradient(atomCharges,cgCharges,nAtoms,nCgs,intRss,atomPos,cgPos)
         
                 call move_cg_sites(cgPos,nCgs,chargeForce)
                 call recompute_A_B_matrices(atomPos,nAtoms,cgPos,nCgs,A,B)
@@ -218,12 +218,12 @@ subroutine move_cg_sites(cgPos,nCgs,chargeForce)
         real (kind=8) chargeForce(nCgs,3)
 
         ! move cg position vector
-        cgPos = cgPos - lambda*chargeForce
+        cgPos = cgPos + lambda*chargeForce
 
 endsubroutine move_cg_sites
 
 ! Compute the spacial gradient of the charge residual
-subroutine compute_charge_gradient(A,B,C,atomCharges,cgCharges,nAtoms,nCgs,intRss,atomPos,cgPos)
+subroutine compute_charge_gradient(atomCharges,cgCharges,nAtoms,nCgs,intRss,atomPos,cgPos)
         use minData
         implicit none
         real (kind=8), parameter :: pi = 3.1415926535
@@ -231,9 +231,6 @@ subroutine compute_charge_gradient(A,B,C,atomCharges,cgCharges,nAtoms,nCgs,intRs
         integer nCgs
         real (kind=8) atomPos(nAtoms,3)
         real (kind=8) cgPos(nCgs,3)
-        real (kind=8) A(nCgs,nCgs)
-        real (kind=8) B(nCgs,nAtoms)
-        real (kind=8) C(nAtoms,nAtoms)
         real (kind=8) cgCharges(nCgs)
         real (kind=8) atomCharges(nAtoms)
         real (kind=8) intRss
@@ -250,13 +247,13 @@ subroutine compute_charge_gradient(A,B,C,atomCharges,cgCharges,nAtoms,nCgs,intRs
         do cg1 = 1, nCgs
                 do atom = 1, nAtoms
                         temp = cgPos(cg1,:) - atomPos(atom,:)
-                        temp = 4*pi*cgCharges(cg1)*atomCharges(atom)* temp/norm2(temp)
+                        temp = -4*pi*cgCharges(cg1)*atomCharges(atom)* temp/norm2(temp)
                         chargeForce(cg1,:) = chargeForce(cg1,:) + temp
                 enddo
                 do cg2 = 1, nCgs
                         if (cg1 .ne. cg2) then
                                 temp = cgPos(cg1,:) - cgPos(cg2,:)
-                                temp = -4*pi*cgCharges(cg1)*cgCharges(cg2)* temp/norm2(temp)
+                                temp = 4*pi*cgCharges(cg1)*cgCharges(cg2)* temp/norm2(temp)
                                 chargeForce(cg1,:) = chargeForce(cg1,:) + temp
                         endif
                 enddo
@@ -402,18 +399,20 @@ subroutine integral_fit_charges(A, B, C, atomCharges, cgCharges, nAtoms, nCg, rs
         real (kind=8), parameter :: pi = 3.1415926535
         integer nAtoms
         integer nCg
-        real (kind=8) A(nCg,nCg)
-        real (kind=8) ATemp(nCg,nCg)
+        real (kind=8) A(nCg,nAtoms)
+        real (kind=8) ATemp(nCg,nAtoms)
+        real (kind=8) B(nCg,nCg)
+        real (kind=8) BTemp(nCg,nCg)
         real (kind=8) D(nCg-1,nCg)
-        real (kind=8) B(nCg,nAtoms)
         real (kind=8) C(nAtoms,nAtoms)
-        real (kind=8) BTemp(nCg,nAtoms)
         real (kind=8) cgCharges(nCg,1)
         real (kind=8) atomCharges(nAtoms)
         real (kind=8) atomChargesM(nAtoms,1)
-        real (kind=8) newB(nCg)
+        real (kind=8) solution(nCg)
         real (kind=8) temp(1,1)
         real (kind=8) rss
+        real (kind=8) rss2
+        real (kind=8) rss3
         integer j, i, k
         !lapack routine variables
         integer ipiv(nCg)
@@ -434,16 +433,21 @@ subroutine integral_fit_charges(A, B, C, atomCharges, cgCharges, nAtoms, nCg, rs
         BTemp(nCg,:) = 1.0
 
         ! multiple right hand side of equation by atomic charges
-        newB = matmul(BTemp,atomCharges)
+        solution = matmul(ATemp,atomCharges)
         ! determine the solution to system of linear equations ATemp*X = newB
-        call dgesv(nCg,1, ATemp,nCg,ipiv,newB,nCg,info)
+        call dgesv(nCg,1, BTemp,nCg,ipiv,solution,nCg,info)
         
-        cgCharges(:,1) = real(newB(1:nCg))
+        cgCharges(:,1) = real(solution(1:nCg))
         atomChargesM(:,1) = atomCharges
 
         ! compute residual sum of squares
-        temp = matmul(transpose(atomChargesM),matmul(C,atomChargesM))+matmul(transpose(cgCharges),matmul(A,cgCharges))-2*matmul(transpose(cgCharges),matmul(B,atomChargesM))
+        temp = matmul(transpose(atomChargesM),matmul(C,atomChargesM))+matmul(transpose(cgCharges),matmul(B,cgCharges))-2*matmul(transpose(cgCharges),matmul(A,atomChargesM))
         rss = 2*pi*temp(1,1)
+        temp = matmul(transpose(atomChargesM),matmul(C,atomChargesM))-matmul(transpose(cgCharges),matmul(B,cgCharges))
+        rss2 = 2*pi*temp(1,1)
+        temp = matmul(transpose(atomChargesM),matmul(C,atomChargesM))-matmul(transpose(cgCharges),matmul(A,atomChargesM))
+        rss3 = 2*pi*temp(1,1)
+        print*, rss, rss3, rss2
 
 endsubroutine integral_fit_charges
 
@@ -455,8 +459,8 @@ subroutine compute_A_B_C_matrices(atomPos,nAtoms,cgPos,nCgs,A,B,C)
         real (kind=8) atomPos(nAtoms,3)
         real (kind=8) atomCharges(nAtoms)
         real (kind=8) cgPos(nCgs,3)
-        real (kind=8) A(nCgs,nCgs)
-        real (kind=8) B(nCgs,nAtoms)
+        real (kind=8) A(nCgs,nAtoms)
+        real (kind=8) B(nCgs,nCgs)
         real (kind=8) C(nAtoms,nAtoms)
         real (kind=8) dist, temp
         !loop indeces
@@ -464,7 +468,7 @@ subroutine compute_A_B_C_matrices(atomPos,nAtoms,cgPos,nCgs,A,B,C)
         integer j
         integer atom1, atom2
 
-        ! populate A matrix with negative distances between CG sites
+        ! populate B matrix with negative distances between CG sites
         do cgSite1 = 1, nCgs-1
                 do cgSite2 = cgSite1+1,nCgs
                         dist = 0
@@ -473,13 +477,13 @@ subroutine compute_A_B_C_matrices(atomPos,nAtoms,cgPos,nCgs,A,B,C)
                                 dist = dist + temp*temp
                         enddo
                         dist = sqrt(dist)
-                        A(cgSite1,cgSite2) = A(cgSite1,cgSite2)-dist
+                        B(cgSite1,cgSite2) = B(cgSite1,cgSite2)-dist
                         !symmetrize the matrix
-                        A(cgSite2,cgSite1) = A(cgSite1,cgSite2)
+                        B(cgSite2,cgSite1) = B(cgSite1,cgSite2)
                 enddo
         enddo
 
-        ! populate B matrix with negative distance between CG sites and atoms
+        ! populate A matrix with negative distance between CG sites and atoms
         do cgSite1 = 1, nCgs
                 do atom1 = 1,nAtoms
                         dist = 0
@@ -487,7 +491,7 @@ subroutine compute_A_B_C_matrices(atomPos,nAtoms,cgPos,nCgs,A,B,C)
                                 temp = cgPos(cgSite1,j)-atomPos(atom1,j)
                                 dist = dist + temp*temp
                         enddo
-                        B(cgSite1,atom1) = B(cgSite1,atom1)-sqrt(dist)
+                        A(cgSite1,atom1) = A(cgSite1,atom1)-sqrt(dist)
                 enddo
         enddo
 
@@ -508,53 +512,6 @@ subroutine compute_A_B_C_matrices(atomPos,nAtoms,cgPos,nCgs,A,B,C)
 endsubroutine compute_A_B_C_matrices
 
 !
-subroutine update_A_B_matrices(atomPos,nAtoms,cgPos,nCgs,A,B,cgSite)
-        implicit none
-        integer nAtoms
-        integer nCgs
-        integer cgSite
-        real (kind=8) atomPos(nAtoms,3)
-        real (kind=8) atomCharges(nAtoms)
-        real (kind=8) cgPos(nCgs,3)
-        real (kind=8) A(nCgs,nCgs)
-        real (kind=8) B(nCgs,nAtoms)
-        real (kind=8) dist, temp
-        !loop indeces
-        integer cgSite1, cgSite2
-        integer j
-        integer atom1
-
-        ! populate A matrix with negative distances between CG sites
-        cgSite1 = cgSite
-        do cgSite2 = 1,nCgs
-                if (cgSite2 .ne. cgSite1) then
-                        dist = 0
-                        do j=1,3
-                                temp = cgPos(cgSite1,j)-cgPos(cgSite2,j)
-                                dist = dist + temp*temp
-                        enddo
-                        dist = sqrt(dist)
-                        A(cgSite1,cgSite2) = -dist
-                        !symmetrize the matrix
-                        A(cgSite2,cgSite1) = A(cgSite1,cgSite2)
-                endif
-        enddo
-
-        ! populate B matrix with negative distance between CG sites and atoms
-        cgSite1 = cgSite
-        do atom1 = 1,nAtoms
-                dist = 0
-                do j=1,3
-                        temp = cgPos(cgSite1,j)-atomPos(atom1,j)
-                        dist = dist + temp*temp
-                enddo
-                dist = sqrt(dist)
-                B(cgSite1,atom1) = -dist
-        enddo
-
-endsubroutine update_A_B_matrices
-
-!
 subroutine recompute_A_B_matrices(atomPos,nAtoms,cgPos,nCgs,A,B)
         implicit none
         integer nAtoms
@@ -562,15 +519,15 @@ subroutine recompute_A_B_matrices(atomPos,nAtoms,cgPos,nCgs,A,B)
         real (kind=8) atomPos(nAtoms,3)
         real (kind=8) atomCharges(nAtoms)
         real (kind=8) cgPos(nCgs,3)
-        real (kind=8) A(nCgs,nCgs)
-        real (kind=8) B(nCgs,nAtoms)
+        real (kind=8) A(nCgs,nAtoms)
+        real (kind=8) B(nCgs,nCgs)
         real (kind=8) dist, temp
         !loop indeces
         integer cgSite1, cgSite2
         integer j
         integer atom1
 
-        ! populate A matrix with negative distances between CG sites
+        ! populate B matrix with negative distances between CG sites
         do cgSite1 = 1, nCgs-1 
                 do cgSite2 = cgSite1+1,nCgs
                         dist = 0
@@ -579,13 +536,13 @@ subroutine recompute_A_B_matrices(atomPos,nAtoms,cgPos,nCgs,A,B)
                                 dist = dist + temp*temp
                         enddo
                         dist = sqrt(dist)
-                        A(cgSite1,cgSite2) = -dist
+                        B(cgSite1,cgSite2) = -dist
                         !symmetrize the matrix
-                        A(cgSite2,cgSite1) = A(cgSite1,cgSite2)
+                        B(cgSite2,cgSite1) = B(cgSite1,cgSite2)
                  enddo
         enddo
 
-        ! populate B matrix with negative distance between CG sites and atoms
+        ! populate A matrix with negative distance between CG sites and atoms
         do cgSite1 = 1, nCgs
                 do atom1 = 1,nAtoms
                         dist = 0
@@ -594,7 +551,7 @@ subroutine recompute_A_B_matrices(atomPos,nAtoms,cgPos,nCgs,A,B)
                                 dist = dist + temp*temp
                         enddo
                         dist = sqrt(dist)
-                        B(cgSite1,atom1) = -dist
+                        A(cgSite1,atom1) = -dist
                 enddo
         enddo
 
